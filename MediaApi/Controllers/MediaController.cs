@@ -1,10 +1,13 @@
 ﻿using MediaApi.Domain;
+using MediaApi.Helpers;
 using MediaApi.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace MediaApi.Controllers
@@ -12,10 +15,110 @@ namespace MediaApi.Controllers
     public class MediaController : ControllerBase
     {
         MediaDataContext Context;
+        ISystemTime Current;
 
-        public MediaController(MediaDataContext context)
+        public MediaController(MediaDataContext context, ISystemTime current)
         {
             Context = context;
+            Current = current;
+        }
+
+        [HttpPost("media/consumed")]
+        public async Task<IActionResult> ConsumedMedia([FromBody] PostMediaConsumedRequest request)
+        {
+            if(!ModelState.IsValid)
+            {
+                return BadRequest(request);
+            }
+
+            var media = await Context.MediaItems
+                .Where(m => m.Removed == false && m.Id == request.Id)
+                .SingleOrDefaultAsync();
+            if(media == null)
+            {
+                return BadRequest("Bad Media");
+            }
+            else
+            {
+                media.Consumed = true;
+                media.DateConsumed = Current.GetCurrent();
+                await Context.SaveChangesAsync();
+                return NoContent();
+            }
+        }
+
+        [HttpDelete("media/{id:int}")]
+        public async Task<IActionResult> RemoveMediaItem(int id)
+        {
+            var item = await Context.MediaItems
+                .Where(m => m.Removed == false && m.Id == id)
+                .SingleOrDefaultAsync();
+
+            if(item != null)
+            {
+                item.Removed = true;
+                await Context.SaveChangesAsync();
+            }
+            return NoContent();
+        }
+
+        [HttpPost("media")]
+        public async Task<IActionResult> AddMedia([FromBody] PostMediaRequest mediaToAdd)
+        {
+            await Task.Delay(3000);
+
+            if (!ModelState.IsValid)
+            {
+                return BadRequest(ModelState);
+            }
+            else
+            {
+                var media = new MediaItem
+                {
+                    Title = mediaToAdd.Title,
+                    Kind = mediaToAdd.Kind,
+                    Consumed = false,
+                    DateConsumed = null,
+                    RecommendedBy = mediaToAdd.RecommendedBy,
+                    Removed = false
+                };
+                Context.MediaItems.Add(media);
+                await Context.SaveChangesAsync();
+                var response = new MediaResponsItem
+                {
+                    Id = media.Id,
+                    Title = media.Title,
+                    Consumed = media.Consumed,
+                    DateConsumed = media.DateConsumed,
+                    Kind = media.Kind,
+                    RecommendedBy = media.RecommendedBy
+                };
+                return CreatedAtRoute("media#getbyid", new { id = response.Id }, response);
+            }
+        }
+
+        [HttpGet("media/{id:int}", Name = "media#getbyid")]
+        public async Task<IActionResult> GetAMediaItem(int id)
+        {
+            var item = await Context.MediaItems
+                .Where(m => m.Removed == false && m.Id == id)
+                .Select(m => new MediaResponsItem
+                {
+                    Id = m.Id,
+                    Title = m.Title,
+                    RecommendedBy = m.RecommendedBy,
+                    Consumed = m.Consumed,
+                    DateConsumed = m.DateConsumed,
+                    Kind = m.Kind
+                }).SingleOrDefaultAsync();
+            if(item == null)
+            {
+                return NotFound("No item with that id");
+            }
+            else
+            {
+                return Ok(item);
+            }
         }
 
         // GET /media?kind=game
@@ -43,8 +146,6 @@ namespace MediaApi.Controllers
                 FilteredBy = kind
             };
             return Ok(response);
-            // 2. This should be an asynchronous call. We are using up a valuable
-            //    thred of execution just waiting for the datbase query to run.
         }
 
     }
